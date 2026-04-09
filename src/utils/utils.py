@@ -44,21 +44,21 @@ def get_data():
     except FileNotFoundError:
         pass
 
-    from dotenv import load_dotenv
-    import os
+    # from dotenv import load_dotenv
+    # import os
     import requests
     import streamlit as st
 
-    load_dotenv()
-    os.environ["CLIENT_ID"] = st.secrets["client_id"]
-    os.environ["CLIENT_SECRET"] = st.secrets["client_secret"]
+    # load_dotenv()
+    # os.environ["CLIENT_ID"] = st.secrets["client_id"]
+    # os.environ["CLIENT_SECRET"] = st.secrets["client_secret"]
     # CLIENT_ID = os.getenv("fuel_finder_api_client_id")
     # CLIENT_SECRET = os.getenv("fuel_finder_api_client_secret")
     token_url = "https://www.fuel-finder.service.gov.uk/api/v1/oauth/generate_access_token"
     token_payload = {
         'grant_type': 'client_credentials',
-        'client_id': os.getenv("CLIENT_ID"),
-        'client_secret': os.getenv("CLIENT_SECRET")
+        'client_id': st.secrets["client_id"],
+        'client_secret': st.secrets["client_secret"]
     }
 
     token_response = requests.post(token_url, data=token_payload)
