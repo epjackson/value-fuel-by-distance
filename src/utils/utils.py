@@ -57,8 +57,8 @@ def get_data():
         # 'grant_type': 'client_credentials',
         # 'client_id': CLIENT_ID,
         # 'client_secret': CLIENT_SECRET
-        "client_id": st.secrets["api"]["client_id"],
-        "client_secret": st.secrets["api"]["client_secret"]
+        "client_id": st.secrets["client_id"],
+        "client_secret": st.secrets["client_secret"]
     }
 
     token_response = requests.post(token_url, data=token_payload)
