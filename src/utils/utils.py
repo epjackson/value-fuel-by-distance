@@ -47,15 +47,18 @@ def get_data():
     from dotenv import load_dotenv
     import os
     import requests
+    import streamlit as st
 
     load_dotenv()
-    CLIENT_ID = os.getenv("fuel_finder_api_client_id")
-    CLIENT_SECRET = os.getenv("fuel_finder_api_client_secret")
+    # CLIENT_ID = os.getenv("fuel_finder_api_client_id")
+    # CLIENT_SECRET = os.getenv("fuel_finder_api_client_secret")
     token_url = "https://www.fuel-finder.service.gov.uk/api/v1/oauth/generate_access_token"
     token_payload = {
-        'grant_type': 'client_credentials',
-        'client_id': CLIENT_ID,
-        'client_secret': CLIENT_SECRET
+        # 'grant_type': 'client_credentials',
+        # 'client_id': CLIENT_ID,
+        # 'client_secret': CLIENT_SECRET
+        "client_id": st.secrets["api"]["client_id"],
+        "client_secret": st.secrets["api"]["client_secret"]
     }
 
     token_response = requests.post(token_url, data=token_payload)
