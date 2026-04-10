@@ -57,8 +57,8 @@ def get_data():
     token_url = "https://www.fuel-finder.service.gov.uk/api/v1/oauth/generate_access_token"
     token_payload = {
         'grant_type': 'client_credentials',
-        'client_id': st.secrets["client_id"],
-        'client_secret': st.secrets["client_secret"]
+        'client_id': st.secrets["CLIENT_ID"],
+        'client_secret': st.secrets["CLIENT_SECRET"]
     }
 
     token_response = requests.post(token_url, data=token_payload)
