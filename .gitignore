@@ -210,4 +210,4 @@ __marimo__/
 # Project specific
 download.txt
 data/raw/*.csv
-.streamlit
+.streamlit/secrets.toml
