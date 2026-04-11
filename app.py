@@ -80,6 +80,7 @@ elif fuel_type == "PETROL (E10 Standard)":
 if postcode:
     try:
         client_id = st.secrets["CLIENT_ID"]
+        st.write(client_id[0:10])
         client_secret = st.secrets["CLIENT_SECRET"]
     except (KeyError, AttributeError) as e:
         st.error(
