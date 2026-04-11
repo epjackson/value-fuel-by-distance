@@ -2,33 +2,10 @@
 import streamlit as st
 import plotly.express as px
 
-import pandas as pd
-
-from src.utils.utils import get_data, parse_prices, route_distance, postcode_lookup
+from src.utils.utils import route_distance, postcode_lookup, load_fuel_data
 from src.utils.map import visualize_data
 
-# max_distance = 15 # miles
 tank_litres = 50 # litres
-
-@st.cache_data(ttl=3600)
-def load_data():
-    raw_data_dir = "data/raw"
-    location_data = pd.read_csv(f"{raw_data_dir}/pfs_locations.csv")
-    prices_data = pd.read_csv(f"{raw_data_dir}/fuel_prices.csv")
-
-    b7_diesel_prices, b7_diesel_effective_from = zip(*prices_data["fuel_prices"].apply(lambda x: parse_prices(eval(x))))
-    e10_petrol_prices, e10_petrol_effective_from = zip(*prices_data["fuel_prices"].apply(lambda x: parse_prices(eval(x), fuel_type="E10")))
-    prices_data["b7_standard_price"] = b7_diesel_prices
-    prices_data["b7_standard_effective_from"] = b7_diesel_effective_from
-    prices_data["e10_standard_price"] = e10_petrol_prices
-    prices_data["e10_standard_effective_from"] = e10_petrol_effective_from
-
-    merged_data = pd.merge(location_data, prices_data, on=["node_id", "trading_name"], how="outer")
-    
-    # onspd_data = pd.read_csv("data/resources/onspd.csv")
-
-    # return merged_data, onspd_data
-    return merged_data
 
 st.set_page_config(
     page_title="Fuel Prices Near Me",
@@ -39,9 +16,6 @@ st.title(
     ":fuelpump: Fuel Prices Near Me",
     help="**Assumptions**\n\nTotal cost includes a 50 litre tank refuel.")
 
-with st.spinner("Be patient: Loading fresh Fuel Finder data..."):
-    get_data()
-
 distance_by_road_network = st.checkbox(
     "Calculate distance on road network (slower than 'as the crow flies').",
     value=False,
@@ -49,6 +23,11 @@ distance_by_road_network = st.checkbox(
     disabled=True,
     help="This feature uses `osmnx` to calculate the distance from your location to each fuel station by the road network, which is more accurate but can be slow to compute. It is currently **disabled** while I work on optimizing the performance. In the meantime, the app uses straight-line distance as a proxy for road distance, which should still give a good indication of nearby fuel stations.",
     )
+
+# Refresh Data button — clears the cached fuel data so it is re-downloaded on next query
+if st.button("🔄 Refresh Fuel Data", help="Force re-download of fuel price and station data from the API. Use this if you think the data may be stale."):
+    load_fuel_data.clear()
+    st.toast("Cache cleared — data will be re-downloaded on your next search.", icon="✅")
 
 col1, col2, col3, col4 = st.columns(4)
 
@@ -83,13 +62,6 @@ with col3:
         )
     
 with col4:
-    # tank_litres = st.select_slider(
-    #     "Tank size (litres)",
-    #     options=[20, 25, 30, 35, 40, 45, 50, 55, 60],
-    #     value=50,
-    #     key="tank_litres",
-    #     width=400,
-    #     )
     radius_from_origin = st.slider(
         "Maximum distance from your location (miles):",
         min_value=1,
@@ -100,26 +72,19 @@ with col4:
         help="Select the maximum radius from your location (in miles) to consider when showing nearby fuel stations."
     )
 
-# add 'Submmit' button that triggers the data processing and visualization
-# st.button("Submit", key="submit_button", on_click=lambda: None)
-
 if fuel_type == "DIESEL (B7 Standard)":
     fuel_type_key = "b7_standard"
 elif fuel_type == "PETROL (E10 Standard)":
     fuel_type_key = "e10_standard"
 
 if postcode:
-    # merged_data, onspd_data = load_data()
-    merged_data = load_data()
+    client_id, client_secret = st.secrets["CLIENT_ID"], st.secrets["CLIENT_SECRET"]
+    merged_data, last_download_time = load_fuel_data(client_id=client_id, client_secret=client_secret)
 
-    # coords = onspd_data[onspd_data["pcd7"] == postcode][["lat", "long"]].values[0]
     coords = postcode_lookup(postcode)
 
-    merged_data["location"].str.lstrip('"').str.rstrip('"').apply(lambda x: eval(x))
-
-    from ast import literal_eval
-    merged_data["latitude"] = merged_data["location"].apply(lambda x: literal_eval(x)["latitude"])
-    merged_data["longitude"] = merged_data["location"].apply(lambda x: literal_eval(x)["longitude"])
+    merged_data["latitude"] = merged_data["location"].apply(lambda x: x["latitude"] if isinstance(x, dict) else eval(x)["latitude"])
+    merged_data["longitude"] = merged_data["location"].apply(lambda x: x["longitude"] if isinstance(x, dict) else eval(x)["longitude"])
 
     # list 5 fuel stations and prices closest to the coordinates given (as the crow flies)
     merged_data["distance"] = ((merged_data["latitude"] - coords[0])**2 + (merged_data["longitude"] - coords[1])**2)**0.5
@@ -171,28 +136,6 @@ if postcode:
     col1, col2 = st.columns([0.6, 0.4])
 
     with col1:
-        # st.dataframe(
-        #     closest_stations[[
-        #         "trading_name",
-        #         "distance_by_road_miles",
-        #         f"{fuel_type_key}_price",
-        #         f"{fuel_type_key}_effective_from",
-        #         "total_cost_£",
-        #         "cost_saving_£",]],
-        #     hide_index=True,
-        #     height=400)
-
-        # # highlight rows (subtle) where there is a cost saving
-        # def highlight_savings(val):
-        #     try:
-        #         if float(val) < 0:
-        #             # return a light color and high contrast text color for negative values (cost savings)
-        #             return "background-color: lightgreen; color: darkgreen; font-weight: bold"
-        #     except ValueError:
-        #         print(f"Could not convert value to float: {val}")
-
-
-        # write a function to highlight all cost_saving_£ values with continuous color scale based on numerical range either side of 0
         def highlight_savings(val):
             try:
                 val_float = float(val)
@@ -215,52 +158,6 @@ if postcode:
                 f"{fuel_type_key}_effective_from",
                 "total_cost_£",
                 "cost_saving_£",]]
-        # closest_stations_display["cost_saving_£"] = closest_stations_display["cost_saving_£"].apply(lambda x: f"{x}")
-        # closest_stations_display = closest_stations_display.style.applymap(highlight_savings, subset=["cost_saving_£"])
-        
-        # st.data_editor(
-        #     closest_stations_display,
-        #     column_config={
-        #         "trading_name": st.column_config.TextColumn(
-        #             "Fuel Station",
-        #             help="The name of the fuel station.",
-        #             width="medium"
-        #         ),
-        #         "distance_by_road_miles": st.column_config.NumberColumn(
-        #             "Distance (mi)",
-        #             help="The distance to the fuel station by road.",
-        #             width="small",
-        #             format="%.4f",
-        #         ),
-        #         f"{fuel_type_key}_price": st.column_config.NumberColumn(
-        #             f"Price (p/ltr)",
-        #             help=f"The price of {fuel_type} at the fuel station, in pence per litre.",
-        #             width="small",
-        #             format="%.1f",
-        #         ),
-        #         f"{fuel_type_key}_effective_from": st.column_config.TextColumn(
-        #             "Price Effective From",
-        #             help=f"The date and time from which the displayed price of {fuel_type} is effective.",
-        #             width="medium"
-        #         ),
-        #         "total_cost_£": st.column_config.NumberColumn(
-        #             "Total (£)",
-        #             help="The estimated total cost of refuelling at this station, including the cost of the fuel and the additional travel cost based on the distance and assumed miles per litre.",
-        #             width="small",
-        #             format="%.2f",
-        #         ),
-        #         "cost_saving_£": st.column_config.NumberColumn(
-        #             "Saving (£)",
-        #             help="The estimated cost saving (or extra cost if positive) of refuelling at this station compared to the closest station, based on the total cost.",
-        #             width="small",
-        #             format="%.2f",
-        #             # apply conditional formatting to this column to show savings in green and extra cost in red, with intensity based on magnitude of saving or extra cost (capped at £10 for full intensity)
-                    
-        #         ),
-        #     },
-        #     hide_index=True,
-        # )
-
         st.dataframe(
             closest_stations_display.style.applymap(highlight_savings, subset=["cost_saving_£"]),
             column_config={
@@ -360,71 +257,16 @@ if postcode:
         fig.add_annotation(x=uk_price_range.min(), y=0, text=f"{uk_price_range.min()}p", showarrow=False, xshift=20, yshift=10)
         fig.add_annotation(x=uk_price_range.max(), y=0, text=f"{uk_price_range.max()}p", showarrow=False, xshift=-20, yshift=10)
 
-        
-        st.subheader("Local fuel prices compared to UK range")
+        range_info = "The chart below shows the prices of nearby fuel stations in the context of the overall UK price range from 1st to 99th percentile (i.e. excluding outliers). Each point represents a fuel station, with the size of the point indicating the distance from the current location. The horizontal dashed line represents the price of the closest station. You can hover over each point to see more details about the station and its price."
+        st.subheader("Local fuel prices compared to UK range", help=range_info)
         st.plotly_chart(
             fig,
             config=config,
-            # width="stretch",
        )
 
     with col2:
         zoom = 9 # fixed as we are showing stations within 15 miles by road, so a zoom of 9 should be appropriate to show the area clearly
         fig = visualize_data(closest_stations, zoom=zoom, postcode=postcode, origin=coords, radius_miles=radius_from_origin, fuel_type=fuel_type_key)
-
-        # add star marker (red) for current location
-        # fig.add_trace(
-        #     px.scatter_map(
-        #         lat=[coords[0]],
-        #         lon=[coords[1]],
-        #         hover_name=[f"Your location: {postcode}"],
-        #     ).data[0],
-        # )
-
-        # # add marker circle on fig.data[-1] of radius equal to radius_from_origin (in miles) converted to degrees (approximate conversion: 1 mile = 0.0145 degrees)
-        # fig.add_trace(
-        #     px.scatter_map(
-        #         lat=[coords[0]],
-        #         lon=[coords[1]],
-        #     ).data[-1],
-        # )
-        # fig.data[-1].update(
-        #     marker=dict(
-        #         # size=radius_from_origin * 2 * 69 * 0.0145, # convert miles to degrees and multiply by 2 for diameter
-        #         # size is 0.217 degrees or 15 miles; convert to pixels
-        #         size=(radius_from_origin * 2 * 69 * 0.0145 * (2**zoom) * 256) / 360, # convert miles to degrees and then to pixels based on zoom level
-
-        #         color="seagreen",
-        #         symbol="circle",
-        #         opacity=0.2,
-        #         # line=dict(
-        #         #     color="seagreen",
-        #         #     width=2,
-        #         # ),
-        #     ),
-        # )
-        # fig.add_shape(
-        #     type="circle",
-        #     xref="x",
-        #     yref="y",
-        #     x0=coords[1] - (radius_from_origin * 69 * 0.0145),
-        #     y0=coords[0] - (radius_from_origin * 69 * 0.0145),
-        #     x1=coords[1] + (radius_from_origin * 69 * 0.0145),
-        #     y1=coords[0] + (radius_from_origin * 69 * 0.0145),
-        #     line=dict(color="seagreen", width=2),
-        #     fillcolor="seagreen",
-        #     opacity=0.2,
-        # )
-        # print(coords)
-
-        # # make this marker
-        # fig.data[-1].update(
-        #     marker=dict(
-        #         size=20,
-        #         symbol="star",
-        # ),
-        # hovertemplate=f"<b>{postcode}</b><br><extra></extra>",
-        # )
 
         fig.update_layout(
             margin={"r":0,"t":0,"l":0,"b":0},
@@ -456,9 +298,10 @@ if postcode:
     )
 
 else:
-    # st.write("Please enter a postcode to get the coordinates.")
     pass
 
-with open("download.txt", "r") as f:
-    last_download_time = f.read()
-st.write(f"Data last downloaded at: {last_download_time}")
+if 'last_download_time' not in dir():
+    last_download_time = None
+
+if last_download_time:
+    st.write(f"Data last downloaded at: {last_download_time}")

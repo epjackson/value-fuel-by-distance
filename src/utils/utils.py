@@ -1,15 +1,6 @@
 import pandas as pd
-
-def _current_time():
-    import datetime
-    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-def _latest_download_time():
-    timestamp = _current_time()
-
-    # write timestamp to file
-    with open("download.txt", "w") as f:
-        f.write(timestamp)
+import streamlit as st
+import requests
 
 def postcode_lookup(postcode: str):
     
@@ -27,38 +18,13 @@ def postcode_lookup(postcode: str):
         print(f"Postcode {postcode} not found.")
         return None  
         
-  
-def get_data():
-    current_time = _current_time()
-    
-    # compare current time to timestamp in download.txt, if the difference is less than 30 minutes, skip downloading data
-    try:
-        with open("download.txt", "r") as f:
-            last_download_time = f.read()
-            last_download_time = pd.to_datetime(last_download_time)
-            current_time_dt = pd.to_datetime(current_time)
-            time_diff = (current_time_dt - last_download_time).total_seconds() / 60
-            if time_diff < 60:
-                print(f"Data was downloaded {time_diff:.2f} minutes ago. Skipping download.")
-                return
-    except FileNotFoundError:
-        pass
 
-    # from dotenv import load_dotenv
-    # import os
-    import requests
-    import streamlit as st
-
-    # load_dotenv()
-    # os.environ["CLIENT_ID"] = st.secrets["client_id"]
-    # os.environ["CLIENT_SECRET"] = st.secrets["client_secret"]
-    # CLIENT_ID = os.getenv("fuel_finder_api_client_id")
-    # CLIENT_SECRET = os.getenv("fuel_finder_api_client_secret")
+def authenticate_fuel_finder_api(client_id: str, client_secret: str):
     token_url = "https://www.fuel-finder.service.gov.uk/api/v1/oauth/generate_access_token"
     token_payload = {
         'grant_type': 'client_credentials',
-        'client_id': st.secrets["CLIENT_ID"],
-        'client_secret': st.secrets["CLIENT_SECRET"]
+        'client_id': client_id,
+        'client_secret': client_secret
     }
 
     token_response = requests.post(token_url, data=token_payload)
@@ -72,52 +38,58 @@ def get_data():
         "Authorization": f"Bearer {oauth_token}"
     }
 
-    required_data = {
-        "fuel_prices": "pfs/fuel-prices",
-        "pfs_locations": "pfs",
-    }
+    return headers
 
-    for key, endpoint in required_data.items():
-        print(f"Fetching data for {key}...")
-        all_data = []
-        batch_number = 1
-        while True:
-            data = requests.get(
-                f"https://www.fuel-finder.service.gov.uk/api/v1/{endpoint}?batch-number={batch_number}",
-                headers=headers
-            )
-            if data.status_code != 200:
-                break
-            else:
-                all_data = all_data + data.json()
-                batch_number += 1
+def call_fuelfinder_api(key: str, endpoint: str, headers: dict):
+    print(f"Fetching data for {key}...")
+    all_data = []
+    batch_number = 1
+    while True:
+        data = requests.get(
+            f"https://www.fuel-finder.service.gov.uk/api/v1/{endpoint}?batch-number={batch_number}",
+            headers=headers
+        )
+        if data.status_code != 200:
+            break
+        else:
+            all_data = all_data + data.json()
+            batch_number += 1
 
-        print(f"Total records for {key}: {len(all_data)}")
-        pd.DataFrame(all_data).to_csv(f"data/raw/{key}.csv", index=False)
+    print(f"Total records for {key}: {len(all_data)}")
 
-        _latest_download_time()
+    return all_data
 
+@st.cache_data
+def load_fuel_data(client_id: str, client_secret: str):
+    """Fetch and merge fuel price + location data from the Fuel Finder API.
+    
+    Results are cached by Streamlit so the API is only called once per session
+    (or until the cache is explicitly cleared via the Refresh Data button).
+    
+    Returns a tuple of (merged_data, download_timestamp).
+    """
+    import datetime
+    download_timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    headers = authenticate_fuel_finder_api(client_id=client_id, client_secret=client_secret)
+    prices = call_fuelfinder_api(key="fuel_prices", endpoint="pfs/fuel-prices", headers=headers)
+    locations = call_fuelfinder_api(key="pfs_locations", endpoint="pfs", headers=headers)
+    merged_data = merge_data(prices, locations)
+    return merged_data, download_timestamp
 
+def merge_data(prices: list, locations: list):
+    prices_data = pd.DataFrame(prices)
+    location_data = pd.DataFrame(locations)
 
-# def merge_dataframes(df1, df2, on: list[str]):
-#     """
-#     Merge two DataFrames on a specified column.
+    b7_diesel_prices, b7_diesel_effective_from = zip(*prices_data["fuel_prices"].apply(lambda x: parse_prices(x if isinstance(x, list) else eval(x))))
+    e10_petrol_prices, e10_petrol_effective_from = zip(*prices_data["fuel_prices"].apply(lambda x: parse_prices(x if isinstance(x, list) else eval(x), fuel_type="E10")))
+    prices_data["b7_standard_price"] = b7_diesel_prices
+    prices_data["b7_standard_effective_from"] = b7_diesel_effective_from
+    prices_data["e10_standard_price"] = e10_petrol_prices
+    prices_data["e10_standard_effective_from"] = e10_petrol_effective_from
 
-#     Parameters:
-#     df1 (pd.DataFrame): The first DataFrame.
-#     df2 (pd.DataFrame): The second DataFrame.
-#     on (list[str]): The column name(s) to merge on.
+    merged_data = pd.merge(location_data, prices_data, on=["node_id", "trading_name"], how="outer")
 
-#     Returns:
-#     pd.DataFrame: A merged DataFrame.
-#     """
-#     try:
-#         merged_df = pd.merge(df1, df2, on=on)
-#         print(f"DataFrames merged successfully on '{on}'")
-#         return merged_df
-#     except Exception as e:
-#         print(f"Error merging DataFrames: {e}")
-#         return None
+    return merged_data
 
 def _filter_fuel(prices_list: list[dict], fuel_type: str):
     for price_dict in prices_list:
@@ -136,21 +108,6 @@ def parse_prices(prices_list: list[dict], fuel_type: str = "B7_STANDARD"):
     price_effective_from = _effective_from(filtered_price_dict) if filtered_price_dict else None
 
     return filtered_price, price_effective_from
-
-# def parse_last_updated(prices_list: list[dict]):
-#     # extract the last updated timestamp for B7_STANDARD diesel from the list of price dictionaries
-#     # record as datetime and return None if not found
-#     standard_diesel_last_updated = None
-#     for price_dict in prices_list:
-#         if price_dict["fuel_type"] == "B7_STANDARD":
-
-#             from datetime import datetime
-#             standard_diesel_last_updated = datetime.strptime(price_dict["price_last_updated"], "%Y-%m-%dT%H:%M:%S.%fZ")
-#             standard_diesel_last_updated = standard_diesel_last_updated.strftime("%A, %d %B -  %H:%M:%S")
-            
-#             break
-
-#     return standard_diesel_last_updated
 
 def filter_by_radius(dataframe: pd.DataFrame, center_lat: float, center_lon: float, radius_miles: float) -> pd.DataFrame:
     import geopandas as gpd
