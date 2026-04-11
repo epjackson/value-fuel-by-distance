@@ -30,7 +30,12 @@ def authenticate_fuel_finder_api(client_id: str, client_secret: str):
     token_response = requests.post(token_url, data=token_payload)
 
     if token_response.status_code != 200:
-        raise Exception(f"Failed to obtain access token: {token_response.text}")
+        status = token_response.status_code
+        raise Exception(
+            f"Failed to obtain access token (HTTP {status}). "
+            "Please verify your CLIENT_ID and CLIENT_SECRET are correct "
+            "and configured in Streamlit secrets."
+        )
 
     oauth_token = token_response.json()["data"]["access_token"]
 

@@ -78,8 +78,29 @@ elif fuel_type == "PETROL (E10 Standard)":
     fuel_type_key = "e10_standard"
 
 if postcode:
-    client_id, client_secret = st.secrets["CLIENT_ID"], st.secrets["CLIENT_SECRET"]
-    merged_data, last_download_time = load_fuel_data(client_id=client_id, client_secret=client_secret)
+    try:
+        client_id = st.secrets["CLIENT_ID"]
+        client_secret = st.secrets["CLIENT_SECRET"]
+    except (KeyError, AttributeError) as e:
+        st.error(
+            "⚠️ API credentials not found. Please ensure `CLIENT_ID` and `CLIENT_SECRET` "
+            "are configured in Streamlit secrets (Settings → Secrets on Streamlit Cloud, "
+            "or `.streamlit/secrets.toml` locally)."
+        )
+        st.stop()
+
+    if not client_id or not client_secret:
+        st.error(
+            "⚠️ API credentials are empty. Please check that `CLIENT_ID` and `CLIENT_SECRET` "
+            "are set correctly in Streamlit secrets."
+        )
+        st.stop()
+
+    try:
+        merged_data, last_download_time = load_fuel_data(client_id=client_id, client_secret=client_secret)
+    except Exception as e:
+        st.error(f"⚠️ Failed to load fuel data: {e}")
+        st.stop()
 
     coords = postcode_lookup(postcode)
 
